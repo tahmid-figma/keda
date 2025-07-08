@@ -643,6 +643,11 @@ func (s *datadogScaler) GetMetricSpecForScaling(context.Context) []v2.MetricSpec
 	return []v2.MetricSpec{metricSpec}
 }
 
+func (s *datadogScaler) fallbackResponse(metricName string) ([]external_metrics.ExternalMetricValue, bool, error) {
+	metric := GenerateMetricInMili(metricName, s.metadata.fillValue)
+	return []external_metrics.ExternalMetricValue{metric}, true, nil
+}
+
 // GetMetricsAndActivity returns value for a supported metric and an error if there is a problem getting the metric
 func (s *datadogScaler) GetMetricsAndActivity(ctx context.Context, metricName string) ([]external_metrics.ExternalMetricValue, bool, error) {
 	var metric external_metrics.ExternalMetricValue
@@ -654,12 +659,14 @@ func (s *datadogScaler) GetMetricsAndActivity(ctx context.Context, metricName st
 
 		req, err := s.getDatadogClusterAgentHTTPRequest(ctx, url)
 		if (err != nil) || (req == nil) {
-			return []external_metrics.ExternalMetricValue{}, false, fmt.Errorf("error generating http request: %w", err)
+			s.logger.Error(err, "error getting metrics from Datadog while generating http request")
+			return s.fallbackResponse(metricName)
 		}
 
 		num, err = s.getDatadogMetricValue(req)
 		if err != nil {
-			return []external_metrics.ExternalMetricValue{}, false, fmt.Errorf("error getting metric value: %w", err)
+			s.logger.Error(err, "error getting metrics from Datadog while getting metric value")
+			return s.fallbackResponse(metricName)
 		}
 
 		metric = GenerateMetricInMili(metricName, num)
@@ -668,7 +675,7 @@ func (s *datadogScaler) GetMetricsAndActivity(ctx context.Context, metricName st
 	num, err = s.getQueryResult(ctx)
 	if err != nil {
 		s.logger.Error(err, "error getting metrics from Datadog")
-		return []external_metrics.ExternalMetricValue{}, false, fmt.Errorf("error getting metrics from Datadog: %w", err)
+		return s.fallbackResponse(metricName)
 	}
 
 	metric = GenerateMetricInMili(metricName, num)

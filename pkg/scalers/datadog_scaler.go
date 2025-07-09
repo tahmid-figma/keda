@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
 	"slices"
@@ -644,7 +645,10 @@ func (s *datadogScaler) GetMetricSpecForScaling(context.Context) []v2.MetricSpec
 }
 
 func (s *datadogScaler) fallbackResponse(metricName string) ([]external_metrics.ExternalMetricValue, bool, error) {
-	metric := GenerateMetricInMili(metricName, s.metadata.fillValue)
+	// we choose the target value + a small number as the fallback in case the fill value is not set
+	slightlyHigherThanActivationValue := s.metadata.activationQueryValue + math.SmallestNonzeroFloat64
+	fallbackValue := max(s.metadata.fillValue, slightlyHigherThanActivationValue)
+	metric := GenerateMetricInMili(metricName, fallbackValue)
 	return []external_metrics.ExternalMetricValue{metric}, true, nil
 }
 

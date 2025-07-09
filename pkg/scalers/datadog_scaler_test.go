@@ -2,6 +2,8 @@ package scalers
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"testing"
 
@@ -239,5 +241,183 @@ func TestBuildMetricURL(t *testing.T) {
 	url := buildMetricURL("https://localhost:8080/apis/datadoghq.com/v1alpha1", "datadogMetricNamespace", "datadogMetricName")
 	if url != "https://localhost:8080/apis/datadoghq.com/v1alpha1/namespaces/datadogMetricNamespace/datadogMetricName" {
 		t.Error("Expected https://localhost:8080/apis/datadoghq.com/v1alpha1/namespaces/datadogMetricNamespace/datadogMetricName, got ", url)
+	}
+}
+
+func TestDatadogScalerGetMetricsAndActivity_ClusterAgent(t *testing.T) {
+	testCases := []struct {
+		name                  string
+		responseCode          int
+		responseBody          string
+		activationTargetValue float64
+		expectedMetricValue   float64
+		expectedActivity      bool
+		expectedError         bool
+		expectedFallback      bool
+	}{
+		{
+			name:                  "successful response",
+			responseCode:          200,
+			responseBody:          `{"items":[{"value":"4.0"}]}`,
+			activationTargetValue: 1.0,
+			expectedMetricValue:   4.0,
+			expectedActivity:      true,
+			expectedError:         false,
+		},
+		{
+			name:                  "successful response below activation threshold",
+			responseCode:          200,
+			responseBody:          `{"items":[{"value":"0.5"}]}`,
+			activationTargetValue: 1.0,
+			expectedMetricValue:   0.5,
+			expectedActivity:      false,
+			expectedError:         false,
+		},
+		{
+			name:                  "error response triggers fallback",
+			responseCode:          500,
+			responseBody:          `{"message":"Internal server error"}`,
+			activationTargetValue: 1.0,
+			expectedMetricValue:   2.5,
+			expectedActivity:      true,
+			expectedError:         false,
+			expectedFallback:      true,
+		},
+		{
+			name:                  "invalid JSON response triggers fallback",
+			responseCode:          200,
+			responseBody:          `invalid json`,
+			activationTargetValue: 1.0,
+			expectedMetricValue:   2.5,
+			expectedActivity:      true,
+			expectedError:         false,
+			expectedFallback:      true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			metricName := "test-metric"
+
+			// Create test server
+			testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.responseCode)
+				w.Write([]byte(tc.responseBody))
+			}))
+			defer testServer.Close()
+
+			// Create metadata
+			metadata := &datadogMetadata{
+				fillValue:               2.5,
+				useFiller:               true,
+				activationTargetValue:   tc.activationTargetValue,
+				hpaMetricName:           "test-hpa-metric",
+				datadogMetricServiceURL: testServer.URL,
+				datadogMetricNamespace:  "test-namespace",
+				datadogMetricName:       "test-metric",
+				enableBearerAuth:        true,
+				bearerToken:             "test-token",
+			}
+
+			// Create scaler
+			scaler := &datadogScaler{
+				metadata:             metadata,
+				logger:               logr.Discard(),
+				useClusterAgentProxy: true,
+				httpClient:           &http.Client{},
+			}
+
+			// Call GetMetricsAndActivity
+			metrics, activity, err := scaler.GetMetricsAndActivity(ctx, metricName)
+
+			// Verify results
+			if tc.expectedError && err == nil {
+				t.Errorf("Expected error but got none")
+			}
+			if !tc.expectedError && err != nil {
+				t.Errorf("Expected no error but got: %v", err)
+			}
+
+			if len(metrics) != 1 {
+				t.Errorf("Expected 1 metric but got %d", len(metrics))
+			}
+
+			if len(metrics) > 0 {
+				actualValue := metrics[0].Value.AsApproximateFloat64()
+				if actualValue != tc.expectedMetricValue {
+					t.Errorf("Expected metric value %f but got %f", tc.expectedMetricValue, actualValue)
+				}
+			}
+
+			if activity != tc.expectedActivity {
+				t.Errorf("Expected activity %v but got %v", tc.expectedActivity, activity)
+			}
+		})
+	}
+}
+
+func TestDatadogScalerFallbackResponse(t *testing.T) {
+	testCases := []struct {
+		name                string
+		useFiller           bool
+		fillValue           float64
+		expectedMetricValue float64
+		expectedActivity    bool
+	}{
+		{
+			name:                "fallback with filler enabled",
+			useFiller:           true,
+			fillValue:           2.5,
+			expectedMetricValue: 2.5,
+			expectedActivity:    true,
+		},
+		{
+			name:                "fallback with filler disabled",
+			useFiller:           false,
+			fillValue:           3.0,
+			expectedMetricValue: 3.0,
+			expectedActivity:    true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			metadata := &datadogMetadata{
+				fillValue: tc.fillValue,
+				useFiller: tc.useFiller,
+			}
+
+			scaler := &datadogScaler{
+				metadata: metadata,
+				logger:   logr.Discard(),
+			}
+
+			metricName := "test-metric"
+			metrics, activity, err := scaler.fallbackResponse(metricName)
+
+			if err != nil {
+				t.Errorf("Expected no error but got: %v", err)
+			}
+
+			if len(metrics) != 1 {
+				t.Errorf("Expected 1 metric but got %d", len(metrics))
+			}
+
+			if len(metrics) > 0 {
+				actualValue := metrics[0].Value.AsApproximateFloat64()
+				if actualValue != tc.expectedMetricValue {
+					t.Errorf("Expected metric value %f but got %f", tc.expectedMetricValue, actualValue)
+				}
+
+				if metrics[0].MetricName != metricName {
+					t.Errorf("Expected metric name %s but got %s", metricName, metrics[0].MetricName)
+				}
+			}
+
+			if activity != tc.expectedActivity {
+				t.Errorf("Expected activity %v but got %v", tc.expectedActivity, activity)
+			}
+		})
 	}
 }

@@ -15,6 +15,8 @@ VERSION = ${E2E_IMAGE_TAG}
 SUFFIX = -test
 endif
 
+VERSION = 2.17.0-patch
+
 IMAGE_REGISTRY ?= ghcr.io
 IMAGE_REPO     ?= kedacore
 
@@ -216,9 +218,9 @@ run: manifests generate ## Run a controller from your host.
 	WATCH_NAMESPACE="" go run -ldflags $(GO_LDFLAGS) ./cmd/operator/main.go $(ARGS)
 
 docker-build: ## Build docker images with the KEDA Operator and Metrics Server.
-	DOCKER_BUILDKIT=1 docker build . -t ${IMAGE_CONTROLLER} --build-arg BUILD_VERSION=${VERSION} --build-arg GIT_VERSION=${GIT_VERSION} --build-arg GIT_COMMIT=${GIT_COMMIT}
-	DOCKER_BUILDKIT=1 docker build -f Dockerfile.adapter -t ${IMAGE_ADAPTER} . --build-arg BUILD_VERSION=${VERSION} --build-arg GIT_VERSION=${GIT_VERSION} --build-arg GIT_COMMIT=${GIT_COMMIT}
-	DOCKER_BUILDKIT=1 docker build -f Dockerfile.webhooks -t ${IMAGE_WEBHOOKS} . --build-arg BUILD_VERSION=${VERSION} --build-arg GIT_VERSION=${GIT_VERSION} --build-arg GIT_COMMIT=${GIT_COMMIT}
+	DOCKER_BUILDKIT=1 docker build --platform=linux/amd64 . -t ${IMAGE_CONTROLLER} --build-arg BUILD_VERSION=${VERSION} --build-arg GIT_VERSION=${GIT_VERSION} --build-arg GIT_COMMIT=${GIT_COMMIT}
+	DOCKER_BUILDKIT=1 docker build --platform=linux/amd64 -f Dockerfile.adapter -t ${IMAGE_ADAPTER} . --build-arg BUILD_VERSION=${VERSION} --build-arg GIT_VERSION=${GIT_VERSION} --build-arg GIT_COMMIT=${GIT_COMMIT}
+	DOCKER_BUILDKIT=1 docker build --platform=linux/amd64 -f Dockerfile.webhooks -t ${IMAGE_WEBHOOKS} . --build-arg BUILD_VERSION=${VERSION} --build-arg GIT_VERSION=${GIT_VERSION} --build-arg GIT_COMMIT=${GIT_COMMIT}
 
 publish: docker-build ## Push images on to Container Registry (default: ghcr.io).
 	docker push $(IMAGE_CONTROLLER)

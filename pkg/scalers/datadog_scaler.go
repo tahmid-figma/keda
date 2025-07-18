@@ -31,6 +31,7 @@ type datadogScaler struct {
 	httpClient           *http.Client
 	logger               logr.Logger
 	useClusterAgentProxy bool
+	isAuthValidated      bool
 }
 
 type datadogMetadata struct {
@@ -426,7 +427,7 @@ func parseDatadogClusterAgentMetadata(config *scalersconfig.ScalerConfig, logger
 	return &meta, nil
 }
 
-// newDatadogAPIConnection tests a connection to the Datadog API
+// newDatadogAPIConnection creates a new Datadog API client that needs to be validated
 func newDatadogAPIConnection(ctx context.Context, meta *datadogMetadata, config *scalersconfig.ScalerConfig) (*datadog.APIClient, error) {
 	ctx = context.WithValue(
 		ctx,
@@ -450,11 +451,6 @@ func newDatadogAPIConnection(ctx context.Context, meta *datadogMetadata, config 
 	configuration := datadog.NewConfiguration()
 	configuration.HTTPClient = kedautil.CreateHTTPClient(config.GlobalHTTPTimeout, false)
 	apiClient := datadog.NewAPIClient(configuration)
-
-	_, _, err := apiClient.AuthenticationApi.Validate(ctx) //nolint:bodyclose
-	if err != nil {
-		return nil, fmt.Errorf("error connecting to Datadog API endpoint: %w", err)
-	}
 
 	return apiClient, nil
 }
@@ -487,6 +483,14 @@ func (s *datadogScaler) getQueryResult(ctx context.Context) (float64, error) {
 		map[string]string{
 			"site": s.metadata.datadogSite,
 		})
+
+	if !s.isAuthValidated {
+		_, _, err := s.apiClient.AuthenticationApi.Validate(ctx) //nolint:bodyclose
+		if err != nil {
+			return -1, fmt.Errorf("error connecting to Datadog API endpoint: %w", err)
+		}
+		s.isAuthValidated = true
+	}
 
 	timeWindowTo := time.Now().Unix() - int64(s.metadata.timeWindowOffset)
 	timeWindowFrom := timeWindowTo - int64(s.metadata.age)

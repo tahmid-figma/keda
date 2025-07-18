@@ -15,7 +15,7 @@ VERSION = ${E2E_IMAGE_TAG}
 SUFFIX = -test
 endif
 
-VERSION = 2.17.0-patch
+VERSION = 2.17.0-patch2
 
 IMAGE_REGISTRY ?= ghcr.io
 IMAGE_REPO     ?= kedacore
